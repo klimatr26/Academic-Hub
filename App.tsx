@@ -59,6 +59,15 @@ import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets, initialWindowMetrics
 import * as SystemUI from 'expo-system-ui'
 import { SystemBars } from 'react-native-edge-to-edge'
 import DateTimePicker from '@react-native-community/datetimepicker'
+import * as Notifications from 'expo-notifications'
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+})
 
 type Tab = 'home' | 'calendar' | 'projects' | 'assistant' | 'settings'
 type ThemeName = 'dark' | 'light'
@@ -753,6 +762,7 @@ export default function App() {
 
   const [fontScale, setFontScale] = useState<FontScale>(1)
   const [voiceMode, setVoiceMode] = useState(false)
+  const [reminderOffset, setReminderOffset] = useState<number>(60)
   const [tasks, setTasks] = useState<Task[]>([])
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -821,6 +831,10 @@ export default function App() {
         'SELECT value FROM settings WHERE key = ?;',
         'voiceMode',
       )
+      const savedReminderOffset = await db.getFirstAsync<{ value: string }>(
+        'SELECT value FROM settings WHERE key = ?;',
+        'reminderOffset',
+      )
       const nextTasks = await loadTasks(db)
       const nextSubjects = await loadSubjects(db)
       const nextProjects = await loadProjects(db)
@@ -839,6 +853,11 @@ export default function App() {
         setFontScale(parsedScale as FontScale)
       }
       setVoiceMode(savedVoiceMode?.value === 'true')
+      if (savedReminderOffset?.value) setReminderOffset(Number(savedReminderOffset.value))
+
+      const { status: existingStatus } = await Notifications.getPermissionsAsync()
+      if (existingStatus !== 'granted') await Notifications.requestPermissionsAsync()
+
       setIsReady(true)
     }
 
@@ -880,6 +899,18 @@ export default function App() {
     } else {
       Speech.stop()
     }
+  }
+
+  const saveReminderOffset = async (offset: number) => {
+    setReminderOffset(offset)
+    const db = dbRef.current
+    if (!db) return
+    await db.runAsync(
+      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value;',
+      'reminderOffset',
+      String(offset),
+    )
+    await syncAllTaskNotifications(tasks, offset)
   }
 
   const refreshTasks = async () => {
@@ -1015,6 +1046,7 @@ export default function App() {
     }
 
     await insertTask(db, task)
+    await syncTaskNotification(task, reminderOffset)
     await refreshTasks()
     setModalVisible(false)
     setActiveTab('home')
@@ -1023,7 +1055,13 @@ export default function App() {
   const toggleTask = async (taskId: string) => {
     const task = tasks.find((item) => item.id === taskId)
     if (!task) return
-    await dbRef.current?.runAsync('UPDATE tasks SET done = ? WHERE id = ?;', task.done ? 0 : 1, taskId)
+    const nextDone = task.done ? 0 : 1
+    await dbRef.current?.runAsync('UPDATE tasks SET done = ? WHERE id = ?;', nextDone, taskId)
+    if (nextDone) {
+      await cancelTaskNotification(taskId)
+    } else {
+      await syncTaskNotification({ ...task, done: false }, reminderOffset)
+    }
     await refreshTasks()
   }
 
@@ -1035,6 +1073,7 @@ export default function App() {
         style: 'destructive',
         onPress: async () => {
           await dbRef.current?.runAsync('DELETE FROM tasks WHERE id = ?;', task.id)
+          await cancelTaskNotification(task.id)
           if (selectedTaskId === task.id) setSelectedTaskId(null)
           await refreshTasks()
         },
@@ -1046,6 +1085,7 @@ export default function App() {
     const db = dbRef.current
     if (!db) return
     await updateTaskInDb(db, task)
+    await syncTaskNotification(task, reminderOffset)
     await refreshTasks()
   }
 
@@ -1201,6 +1241,8 @@ export default function App() {
                 setFontScale={saveFontScale}
                 voiceMode={voiceMode}
                 setVoiceMode={saveVoiceMode}
+                reminderOffset={reminderOffset}
+                setReminderOffset={saveReminderOffset}
                 resetData={resetData}
                 imageCount={imageCount}
                 audioCount={audioCount}
@@ -1588,6 +1630,8 @@ function SettingsView({
   setFontScale,
   voiceMode,
   setVoiceMode,
+  reminderOffset,
+  setReminderOffset,
   resetData,
   imageCount,
   audioCount,
@@ -1601,6 +1645,8 @@ function SettingsView({
   setFontScale: (scale: FontScale) => void
   voiceMode: boolean
   setVoiceMode: (enabled: boolean) => void
+  reminderOffset: number
+  setReminderOffset: (offset: number) => void
   resetData: () => void
   imageCount: number
   audioCount: number
@@ -1650,6 +1696,31 @@ function SettingsView({
             >
               <Text style={[styles.segmentText, fontScale === scale && { color: theme.accent }]}>
                 {scale === 1 ? 'Normal' : scale === 1.15 ? 'Grande' : 'Muy grande'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.settingsSection}>
+        <View style={styles.settingsHeader}>
+          <View style={styles.courseIcon}>
+            <Bell color={theme.accent} size={23} />
+          </View>
+          <View style={styles.settingsCopy}>
+            <Text style={styles.courseTitle}>Anticipación de la alarma</Text>
+            <Text style={styles.cardMuted}>Minutos previos al recordatorio.</Text>
+          </View>
+        </View>
+        <View style={styles.segmentRow}>
+          {[0, 15, 30, 60, 120].map((mins) => (
+            <Pressable
+              key={mins}
+              style={[styles.segmentButton, reminderOffset === mins && styles.segmentButtonActive]}
+              onPress={() => setReminderOffset(mins)}
+            >
+              <Text style={[styles.segmentText, reminderOffset === mins && { color: theme.accent }]}>
+                {mins === 0 ? 'Exacto' : `${mins}m`}
               </Text>
             </Pressable>
           ))}
@@ -2976,6 +3047,46 @@ function BottomTabs({
       })}
     </View>
   )
+}
+
+const cancelTaskNotification = async (taskId: string) => {
+  await Notifications.cancelScheduledNotificationAsync(taskId).catch(() => {})
+}
+
+const syncTaskNotification = async (task: Task, offsetMinutes: number) => {
+  await cancelTaskNotification(task.id)
+  if (task.done || !task.reminder) return
+
+  const parts = task.date.split('-')
+  const timeParts = task.time.split(':')
+  if (parts.length !== 3 || timeParts.length !== 2) return
+
+  const targetDate = new Date(
+    Number(parts[0]),
+    Number(parts[1]) - 1,
+    Number(parts[2]),
+    Number(timeParts[0]),
+    Number(timeParts[1]),
+  )
+  targetDate.setMinutes(targetDate.getMinutes() - offsetMinutes)
+
+  if (targetDate.getTime() > Date.now()) {
+    await Notifications.scheduleNotificationAsync({
+      identifier: task.id,
+      content: {
+        title: `Recordatorio: ${task.title}`,
+        body: `Tienes una tarea de ${task.course} pendiente.`,
+        sound: true,
+      },
+      trigger: targetDate,
+    }).catch(() => {})
+  }
+}
+
+const syncAllTaskNotifications = async (currentTasks: Task[], offsetMinutes: number) => {
+  for (const task of currentTasks) {
+    await syncTaskNotification(task, offsetMinutes)
+  }
 }
 
 function createStyles(theme: Theme, fontScale: FontScale) {
