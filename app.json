@@ -45,7 +45,8 @@
       "expo-sqlite",
       "expo-audio",
       "expo-asset",
-      "react-native-edge-to-edge"
+      "react-native-edge-to-edge",
+      "@react-native-community/datetimepicker"
     ]
   }
 }

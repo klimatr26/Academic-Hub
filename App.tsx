@@ -58,6 +58,7 @@ import {
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context'
 import * as SystemUI from 'expo-system-ui'
 import { SystemBars } from 'react-native-edge-to-edge'
+import DateTimePicker from '@react-native-community/datetimepicker'
 
 type Tab = 'home' | 'calendar' | 'projects' | 'assistant' | 'settings'
 type ThemeName = 'dark' | 'light'
@@ -256,7 +257,20 @@ const dbName = 'academic_hub.db'
 const mediaFolder = `${FileSystem.documentDirectory ?? ''}academic-hub-media/`
 const fontScales: FontScale[] = [1, 1.15, 1.3]
 
-const formatIso = (date: Date) => date.toISOString().slice(0, 10)
+const formatIso = (date: Date) => {
+  const yyyy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+const validateDateTime = (dateStr: string, timeStr: string): string | null => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return 'La fecha debe tener el formato YYYY-MM-DD. Por ejemplo: 2026-05-20'
+  const parsedDate = new Date(dateStr)
+  if (isNaN(parsedDate.getTime()) || parsedDate.toISOString().split('T')[0] !== dateStr) return 'La fecha ingresada no existe en el calendario.'
+  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(timeStr)) return 'La hora debe tener el formato HH:mm (24 horas). Por ejemplo: 14:30'
+  return null
+}
 
 const offsetDate = (days: number) => {
   const date = new Date()
@@ -2192,6 +2206,38 @@ function TaskDetailModal({
   const [time, setTime] = useState('')
   const [priority, setPriority] = useState<Priority>('Media')
 
+  const [showDatePicker, setShowDatePicker] = useState(false)
+  const [showTimePicker, setShowTimePicker] = useState(false)
+
+  const onDateChange = (event: any, selectedDate?: Date) => {
+    setShowDatePicker(false)
+    if (selectedDate) setDate(formatIso(selectedDate))
+  }
+
+  const onTimeChange = (event: any, selectedTime?: Date) => {
+    setShowTimePicker(false)
+    if (selectedTime) {
+      const hours = selectedTime.getHours().toString().padStart(2, '0')
+      const minutes = selectedTime.getMinutes().toString().padStart(2, '0')
+      setTime(`${hours}:${minutes}`)
+    }
+  }
+
+  const getParsedDate = () => {
+    const dStr = date || task?.date || formatIso(new Date())
+    const parts = dStr.split('-')
+    if (parts.length === 3) {
+      return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+    }
+    return new Date()
+  }
+  const getParsedTime = () => {
+    const [h, m] = (time || task?.time || '08:00').split(':')
+    const d = new Date()
+    d.setHours(Number(h) || 8, Number(m) || 0, 0, 0)
+    return d
+  }
+
   useEffect(() => {
     if (!task) return
     setTitle(task.title)
@@ -2210,12 +2256,20 @@ function TaskDetailModal({
       return
     }
 
+    const finalDate = date.trim() || task.date
+    const finalTime = time.trim() || task.time
+    const errorMsg = validateDateTime(finalDate, finalTime)
+    if (errorMsg) {
+      Alert.alert('Formato incorrecto', errorMsg)
+      return
+    }
+
     onSave({
       ...task,
       title: title.trim(),
       description: description.trim(),
-      date: date.trim() || task.date,
-      time: time.trim() || task.time,
+      date: finalDate,
+      time: finalTime,
       priority,
     })
     onClose()
@@ -2252,11 +2306,35 @@ function TaskDetailModal({
             <View style={styles.formRow}>
               <View style={styles.formColumn}>
                 <Text style={styles.formLabel}>Fecha</Text>
-                <TextInput style={styles.field} value={date} onChangeText={setDate} />
+                <Pressable onPress={() => setShowDatePicker(true)}>
+                  <View pointerEvents="none">
+                    <TextInput style={styles.field} value={date} editable={false} />
+                  </View>
+                </Pressable>
+                {showDatePicker && (
+                  <DateTimePicker
+                    value={getParsedDate()}
+                    mode="date"
+                    display="default"
+                    onChange={onDateChange}
+                  />
+                )}
               </View>
               <View style={styles.formColumn}>
                 <Text style={styles.formLabel}>Hora</Text>
-                <TextInput style={styles.field} value={time} onChangeText={setTime} />
+                <Pressable onPress={() => setShowTimePicker(true)}>
+                  <View pointerEvents="none">
+                    <TextInput style={styles.field} value={time} editable={false} />
+                  </View>
+                </Pressable>
+                {showTimePicker && (
+                  <DateTimePicker
+                    value={getParsedTime()}
+                    mode="time"
+                    display="default"
+                    onChange={onTimeChange}
+                  />
+                )}
               </View>
             </View>
 
@@ -2341,6 +2419,38 @@ function TaskModal({
   const [priority, setPriority] = useState<Priority>('Media')
   const [date, setDate] = useState(defaultDate)
   const [time, setTime] = useState('08:00')
+  const [showDatePicker, setShowDatePicker] = useState(false)
+  const [showTimePicker, setShowTimePicker] = useState(false)
+
+  const onDateChange = (event: any, selectedDate?: Date) => {
+    setShowDatePicker(false)
+    if (selectedDate) setDate(formatIso(selectedDate))
+  }
+
+  const onTimeChange = (event: any, selectedTime?: Date) => {
+    setShowTimePicker(false)
+    if (selectedTime) {
+      const hours = selectedTime.getHours().toString().padStart(2, '0')
+      const minutes = selectedTime.getMinutes().toString().padStart(2, '0')
+      setTime(`${hours}:${minutes}`)
+    }
+  }
+
+  const getParsedDate = () => {
+    const dStr = date || defaultDate
+    const parts = dStr.split('-')
+    if (parts.length === 3) {
+      return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+    }
+    return new Date()
+  }
+  const getParsedTime = () => {
+    const [h, m] = (time || '08:00').split(':')
+    const d = new Date()
+    d.setHours(Number(h) || 8, Number(m) || 0, 0, 0)
+    return d
+  }
+
   const [imageUri, setImageUri] = useState<string | null>(null)
   const [audioUri, setAudioUri] = useState<string | null>(null)
   const [isSavingMedia, setIsSavingMedia] = useState(false)
@@ -2411,12 +2521,20 @@ function TaskModal({
       return
     }
 
+    const finalDate = date.trim() || defaultDate
+    const finalTime = time.trim() || '08:00'
+    const errorMsg = validateDateTime(finalDate, finalTime)
+    if (errorMsg) {
+      Alert.alert('Formato incorrecto', errorMsg)
+      return
+    }
+
     onSubmit({
       title: title.trim(),
       description: description.trim(),
       course,
-      date: date.trim() || defaultDate,
-      time: time.trim() || '08:00',
+      date: finalDate,
+      time: finalTime,
       priority,
       reminder: true,
       imageUri,
@@ -2478,23 +2596,47 @@ function TaskModal({
             <View style={styles.formRow}>
               <View style={styles.formColumn}>
                 <Text style={styles.formLabel}>Fecha</Text>
-                <TextInput
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={theme.muted}
-                  style={styles.field}
-                  value={date}
-                  onChangeText={setDate}
-                />
+                <Pressable onPress={() => setShowDatePicker(true)}>
+                  <View pointerEvents="none">
+                    <TextInput
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor={theme.muted}
+                      style={styles.field}
+                      value={date}
+                      editable={false}
+                    />
+                  </View>
+                </Pressable>
+                {showDatePicker && (
+                  <DateTimePicker
+                    value={getParsedDate()}
+                    mode="date"
+                    display="default"
+                    onChange={onDateChange}
+                  />
+                )}
               </View>
               <View style={styles.formColumn}>
                 <Text style={styles.formLabel}>Hora</Text>
-                <TextInput
-                  placeholder="HH:mm"
-                  placeholderTextColor={theme.muted}
-                  style={styles.field}
-                  value={time}
-                  onChangeText={setTime}
-                />
+                <Pressable onPress={() => setShowTimePicker(true)}>
+                  <View pointerEvents="none">
+                    <TextInput
+                      placeholder="HH:mm"
+                      placeholderTextColor={theme.muted}
+                      style={styles.field}
+                      value={time}
+                      editable={false}
+                    />
+                  </View>
+                </Pressable>
+                {showTimePicker && (
+                  <DateTimePicker
+                    value={getParsedTime()}
+                    mode="time"
+                    display="default"
+                    onChange={onTimeChange}
+                  />
+                )}
               </View>
             </View>
 
