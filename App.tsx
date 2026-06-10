@@ -12,7 +12,6 @@ import * as ImagePicker from 'expo-image-picker'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as Speech from 'expo-speech'
 import * as SQLite from 'expo-sqlite'
-import { StatusBar } from 'expo-status-bar'
 import {
   AudioLines,
   Bell,
@@ -49,7 +48,6 @@ import {
   Modal,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Switch,
@@ -57,6 +55,9 @@ import {
   TextInput,
   View,
 } from 'react-native'
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context'
+import * as SystemUI from 'expo-system-ui'
+import { SystemBars } from 'react-native-edge-to-edge'
 
 type Tab = 'home' | 'calendar' | 'projects' | 'assistant' | 'settings'
 type ThemeName = 'dark' | 'light'
@@ -688,11 +689,54 @@ function taskToSpeech(task: Task) {
   return `${task.title}. Materia: ${task.course}. Fecha: ${task.date}, hora ${task.time}. Prioridad ${task.priority}. ${task.description || 'Sin descripción.'}`
 }
 
+function useKeyboardVisible() {
+  const [isVisible, setIsVisible] = useState(false)
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setIsVisible(true))
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setIsVisible(false))
+    return () => {
+      showSub.remove()
+      hideSub.remove()
+    }
+  }, [])
+  return isVisible
+}
+
+function ScrollSpacer() {
+  const insets = useSafeAreaInsets()
+  return <View style={{ height: 116 + Math.max(insets.bottom, 16) }} />
+}
+
+function Fab({ onPress, styles }: { onPress: () => void, styles: ReturnType<typeof createStyles> }) {
+  const isKeyboardVisible = useKeyboardVisible()
+  const insets = useSafeAreaInsets()
+  const bottomInset = Math.max(insets.bottom, 16)
+
+  if (isKeyboardVisible) return null
+
+  return (
+    <Pressable
+      style={[styles.fab, { bottom: bottomInset + 105 }]}
+      onPress={onPress}
+    >
+      <Plus color="#041113" size={32} strokeWidth={2.5} />
+    </Pressable>
+  )
+}
+
 export default function App() {
   const dbRef = useRef<SQLite.SQLiteDatabase | null>(null)
   const activePlayerRef = useRef<AudioPlayer | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('home')
   const [themeName, setThemeName] = useState<ThemeName>('dark')
+  const theme = themes[themeName]
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      SystemUI.setBackgroundColorAsync(theme.bg).catch(() => {})
+    }
+  }, [theme.bg])
+
   const [fontScale, setFontScale] = useState<FontScale>(1)
   const [voiceMode, setVoiceMode] = useState(false)
   const [tasks, setTasks] = useState<Task[]>([])
@@ -708,20 +752,9 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState(formatIso(new Date()))
   const [isReady, setIsReady] = useState(false)
-  const [isKeyboardVisible, setKeyboardVisible] = useState(false)
   const scrollViewRef = useRef<ScrollView>(null)
-  const theme = themes[themeName]
   const styles = useMemo(() => createStyles(theme, fontScale), [theme, fontScale])
   const today = formatIso(new Date())
-
-  useEffect(() => {
-    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true))
-    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false))
-    return () => {
-      showSub.remove()
-      hideSub.remove()
-    }
-  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -1041,12 +1074,13 @@ export default function App() {
 
   return (
     <View style={styles.app}>
-      <StatusBar style={themeName === 'dark' ? 'light' : 'dark'} />
+      <SystemBars style={themeName === 'dark' ? 'light' : 'dark'} />
+    <SafeAreaProvider initialMetrics={initialWindowMetrics} style={{ flex: 1, backgroundColor: theme.bg }}>
       <LinearGradient
         colors={themeName === 'dark' ? ['#08353b', theme.bg] : ['#d8f1f5', theme.bg]}
         style={styles.gradient}
       >
-        <SafeAreaView style={styles.safeArea}>
+        <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
           <ScrollView
             ref={scrollViewRef}
             contentContainerStyle={styles.screen}
@@ -1143,24 +1177,20 @@ export default function App() {
                 audioCount={audioCount}
               />
             )}
+            <ScrollSpacer />
           </ScrollView>
 
-          <Pressable
-            style={[styles.fab, isKeyboardVisible && { opacity: 0, transform: [{ translateY: 500 }] }]}
-            pointerEvents={isKeyboardVisible ? 'none' : 'auto'}
-            onPress={() => setModalVisible(true)}
-          >
-            <Plus color="#041113" size={32} strokeWidth={2.5} />
-          </Pressable>
+          <Fab onPress={() => setModalVisible(true)} styles={styles} />
 
-          <View
-            pointerEvents={isKeyboardVisible ? 'none' : 'box-none'}
-            style={[StyleSheet.absoluteFill, isKeyboardVisible && { opacity: 0, transform: [{ translateY: 500 }] }]}
-          >
-            <BottomTabs activeTab={activeTab} setActiveTab={setActiveTab} styles={styles} theme={theme} />
-          </View>
+          <BottomTabs
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            styles={styles}
+            theme={theme}
+          />
         </SafeAreaView>
       </LinearGradient>
+    </SafeAreaProvider>
 
       <TaskModal
         defaultDate={today}
@@ -2728,6 +2758,10 @@ function BottomTabs({
   styles: ReturnType<typeof createStyles>
   theme: Theme
 }) {
+  const isKeyboardVisible = useKeyboardVisible()
+  const insets = useSafeAreaInsets()
+  const bottomInset = Math.max(insets.bottom, 16)
+
   const items = [
     { id: 'home' as const, label: 'Inicio', icon: Home },
     { id: 'calendar' as const, label: 'Calendario', icon: CalendarDays },
@@ -2736,8 +2770,15 @@ function BottomTabs({
     { id: 'settings' as const, label: 'Ajustes', icon: Settings },
   ]
 
+  if (isKeyboardVisible) return null
+
   return (
-    <View style={styles.bottomTabs}>
+    <View
+      style={[
+        styles.bottomTabs,
+        { height: 86 + bottomInset, paddingBottom: bottomInset }
+      ]}
+    >
       {items.map(({ id, label, icon: Icon }) => {
         const active = activeTab === id
         return (
@@ -2781,7 +2822,6 @@ function createStyles(theme: Theme, fontScale: FontScale) {
     screen: {
       paddingHorizontal: 22,
       paddingTop: 26,
-      paddingBottom: 132,
     },
     header: {
       alignItems: 'flex-start',
@@ -3357,9 +3397,7 @@ function createStyles(theme: Theme, fontScale: FontScale) {
       borderTopWidth: 1,
       bottom: 0,
       flexDirection: 'row',
-      height: 102,
       left: 0,
-      paddingBottom: 16,
       paddingHorizontal: 12,
       paddingTop: 10,
       position: 'absolute',
@@ -3391,7 +3429,6 @@ function createStyles(theme: Theme, fontScale: FontScale) {
       alignItems: 'center',
       backgroundColor: theme.accent,
       borderRadius: 33,
-      bottom: 121,
       height: 66,
       justifyContent: 'center',
       position: 'absolute',
