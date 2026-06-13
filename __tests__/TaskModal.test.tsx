@@ -50,7 +50,7 @@ describe('Task UI', () => {
     expect(input.props.value).toBe('Mi tarea');
   });
 
-  it('submits the selected priority', () => {
+  it('submits the selected priority and reminder', () => {
     const onSubmit = jest.fn();
     const { getByPlaceholderText, getByText } = render(
       <TaskModal {...defaultProps} onSubmit={onSubmit} />,
@@ -61,6 +61,7 @@ describe('Task UI', () => {
       'Preparar exposición',
     );
     fireEvent.press(getByText('Alta'));
+    fireEvent.press(getByText('30m'));
     fireEvent.press(getByText('Guardar en SQLite'));
 
     expect(onSubmit).toHaveBeenCalledWith(
@@ -68,6 +69,7 @@ describe('Task UI', () => {
         title: 'Preparar exposición',
         course: 'IHC',
         priority: 'Alta',
+        reminder: 30,
       }),
     );
   });

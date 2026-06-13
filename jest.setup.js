@@ -20,6 +20,9 @@ jest.mock('expo-sqlite', () => ({
 
 // Mock Expo Notifications
 jest.mock('expo-notifications', () => ({
+  SchedulableTriggerInputTypes: {
+    DATE: 'date',
+  },
   setNotificationHandler: jest.fn(),
   scheduleNotificationAsync: jest.fn(),
   cancelScheduledNotificationAsync: jest.fn(),

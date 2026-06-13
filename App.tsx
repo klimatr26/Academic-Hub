@@ -91,7 +91,8 @@ LocaleConfig.defaultLocale = 'es'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
@@ -111,7 +112,7 @@ type Task = {
   time: string
   priority: Priority
   done: boolean
-  reminder: boolean
+  reminder: number
   imageUri: string | null
   audioUri: string | null
   createdAt: string
@@ -365,7 +366,7 @@ const starterTasks = (): Task[] => [
     time: '09:30',
     priority: 'Alta',
     done: false,
-    reminder: true,
+    reminder: 1,
     imageUri: null,
     audioUri: null,
     createdAt: new Date().toISOString(),
@@ -379,7 +380,7 @@ const starterTasks = (): Task[] => [
     time: '14:00',
     priority: 'Media',
     done: false,
-    reminder: true,
+    reminder: 1,
     imageUri: null,
     audioUri: null,
     createdAt: new Date().toISOString(),
@@ -393,7 +394,7 @@ const starterTasks = (): Task[] => [
     time: '18:20',
     priority: 'Baja',
     done: false,
-    reminder: false,
+    reminder: 0,
     imageUri: null,
     audioUri: null,
     createdAt: new Date().toISOString(),
@@ -403,8 +404,14 @@ const starterTasks = (): Task[] => [
 const rowToTask = (row: TaskRow): Task => ({
   ...row,
   done: row.done === 1,
-  reminder: row.reminder === 1,
+  reminder: Number.isFinite(Number(row.reminder)) ? Number(row.reminder) : 0,
 })
+
+const sortTasks = (items: Task[]) =>
+  [...items].sort((a, b) => {
+    const scheduleOrder = `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`)
+    return scheduleOrder || b.createdAt.localeCompare(a.createdAt)
+  })
 
 async function ensureMediaDirectory() {
   if (!FileSystem.documentDirectory) return
@@ -504,7 +511,7 @@ async function insertTask(db: SQLite.SQLiteDatabase, task: Task) {
     task.time,
     task.priority,
     task.done ? 1 : 0,
-    task.reminder ? 1 : 0,
+    task.reminder,
     task.imageUri,
     task.audioUri,
     task.createdAt,
@@ -590,7 +597,7 @@ async function updateTaskInDb(db: SQLite.SQLiteDatabase, task: Task) {
     task.time,
     task.priority,
     task.done ? 1 : 0,
-    task.reminder ? 1 : 0,
+    task.reminder,
     task.imageUri,
     task.audioUri,
     task.id,
@@ -713,7 +720,7 @@ function runLocalAssistant(question: string, tasks: Task[], subjects: string[]):
       date: getDateFromQuestion(question) ?? formatIso(new Date()),
       time: getTimeFromText(question),
       priority: getPriorityFromText(normalized),
-      reminder: true,
+      reminder: 1,
       imageUri: null,
       audioUri: null,
     }
@@ -1175,11 +1182,16 @@ export default function App() {
       createdAt: new Date().toISOString(),
     }
 
-    await insertTask(db, task)
-    await syncTaskNotification(task, reminderOffset)
-    await refreshTasks()
+    setTasks((current) => sortTasks([...current, task]))
     setModalVisible(false)
-    setActiveTab('home')
+
+    try {
+      await insertTask(db, task)
+      void syncTaskNotification(task, reminderOffset)
+    } catch (error) {
+      setTasks((current) => current.filter((item) => item.id !== task.id))
+      Alert.alert('No se pudo guardar la tarea', String(error))
+    }
   }
 
   const toggleTask = async (taskId: string) => {
@@ -1202,12 +1214,28 @@ export default function App() {
         text: 'Eliminar',
         style: 'destructive',
         onPress: async () => {
-          await dbRef.current?.runAsync('DELETE FROM tasks WHERE id = ?;', task.id)
-          await cancelTaskNotification(task.id)
-          await safeDeleteFile(task.imageUri)
-          await safeDeleteFile(task.audioUri)
+          const db = dbRef.current
+          if (!db) {
+            Alert.alert('No se pudo eliminar la tarea', 'La base de datos no está disponible.')
+            return
+          }
+
+          setTasks((current) => current.filter((item) => item.id !== task.id))
           if (selectedTaskId === task.id) setSelectedTaskId(null)
-          await refreshTasks()
+
+          try {
+            await db.runAsync('DELETE FROM tasks WHERE id = ?;', task.id)
+            void cancelTaskNotification(task.id)
+            void safeDeleteFile(task.imageUri)
+            void safeDeleteFile(task.audioUri)
+          } catch (error) {
+            setTasks((current) =>
+              current.some((item) => item.id === task.id)
+                ? current
+                : sortTasks([...current, task]),
+            )
+            Alert.alert('No se pudo eliminar la tarea', String(error))
+          }
         },
       },
     ])
@@ -1217,17 +1245,29 @@ export default function App() {
     const db = dbRef.current
     if (!db) return
     const oldTask = tasks.find((t) => t.id === task.id)
-    if (oldTask) {
-      if (oldTask.imageUri && oldTask.imageUri !== task.imageUri) {
-        await safeDeleteFile(oldTask.imageUri)
+
+    setTasks((current) =>
+      sortTasks(current.map((item) => (item.id === task.id ? task : item))),
+    )
+
+    try {
+      await updateTaskInDb(db, task)
+      void syncTaskNotification(task, reminderOffset)
+
+      if (oldTask?.imageUri && oldTask.imageUri !== task.imageUri) {
+        void safeDeleteFile(oldTask.imageUri)
       }
-      if (oldTask.audioUri && oldTask.audioUri !== task.audioUri) {
-        await safeDeleteFile(oldTask.audioUri)
+      if (oldTask?.audioUri && oldTask.audioUri !== task.audioUri) {
+        void safeDeleteFile(oldTask.audioUri)
       }
+    } catch (error) {
+      if (oldTask) {
+        setTasks((current) =>
+          sortTasks(current.map((item) => (item.id === oldTask.id ? oldTask : item))),
+        )
+      }
+      Alert.alert('No se pudieron guardar los cambios', String(error))
     }
-    await updateTaskInDb(db, task)
-    await syncTaskNotification(task, reminderOffset)
-    await refreshTasks()
   }
 
   const playAudio = (uri: string) => {
@@ -2540,7 +2580,7 @@ function TaskDetailModal({
   const [course, setCourse] = useState('')
   const [imageUri, setImageUri] = useState<string | null>(null)
   const [audioUri, setAudioUri] = useState<string | null>(null)
-  const [reminder, setReminder] = useState<boolean>(true)
+  const [reminder, setReminder] = useState<number>(1)
 
   const [showDatePicker, setShowDatePicker] = useState(false)
   const [showTimePicker, setShowTimePicker] = useState(false)
@@ -2564,7 +2604,7 @@ function TaskDetailModal({
 
   const toggleRecord = async () => {
     if (recorderState.isRecording) {
-      await recorder.stopAndUnloadAsync()
+      await recorder.stop()
       setAudioUri(recorder.uri)
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true })
       return
@@ -3318,7 +3358,7 @@ function TaskList({
                 <Text style={styles.metaText}>
                   {task.date} - {task.time}
                 </Text>
-                {task.reminder && <Bell color={theme.soft} size={14} />}
+                {task.reminder !== 0 && <Bell color={theme.soft} size={14} />}
               </View>
             </View>
             <Pressable 
@@ -3494,7 +3534,10 @@ const syncTaskNotification = async (task: Task, offsetMinutes: number) => {
         body: `Tienes una tarea de ${task.course} pendiente.`,
         sound: true,
       },
-      trigger: targetDate,
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: targetDate,
+      },
     }).catch(() => {})
   }
 }
@@ -3962,6 +4005,18 @@ function createStyles(theme: Theme, fontScale: FontScale) {
       flexDirection: 'row',
       gap: 14,
       padding: 17,
+    },
+    settingsSection: {
+      backgroundColor: theme.card,
+      borderColor: theme.border,
+      borderRadius: 26,
+      borderWidth: 1,
+      padding: 17,
+    },
+    settingsHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 14,
     },
     settingsCopy: {
       flex: 1,
