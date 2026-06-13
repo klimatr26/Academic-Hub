@@ -1831,7 +1831,7 @@ function ProjectsView({
   )
 }
 
-function SettingsView({
+export function SettingsView({
   styles,
   taskCount,
   theme,
@@ -2814,7 +2814,7 @@ function TaskDetailModal({
   )
 }
 
-function TaskModal({
+export function TaskModal({
   courses,
   defaultDate,
   initialDraft,
@@ -3003,7 +3003,13 @@ function TaskModal({
                 <Text style={styles.eyebrow}>Nueva actividad</Text>
                 <Text style={styles.modalTitle}>Nueva tarea</Text>
               </View>
-              <Pressable onPress={onClose} hitSlop={15} style={{ padding: 4 }}>
+              <Pressable
+                onPress={onClose}
+                hitSlop={15}
+                style={{ padding: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel="Cerrar nueva tarea"
+              >
                 <X color={theme.muted} size={24} />
               </Pressable>
             </View>
@@ -3399,7 +3405,7 @@ function MetricCard({
   )
 }
 
-function BottomTabs({
+export function BottomTabs({
   activeTab,
   setActiveTab,
   styles,
